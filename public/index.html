@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Simulador Reparto - UI (WebSerial)</title>
+<link rel="stylesheet" href="style.css"><link> 
+<link rel="script" href="script.js">
+</head>
+<body>
+<div class="app">
+  <div class="canvas-wrap">
+    <div class="topbar">
+      <div style="display:flex; gap:10px; align-items:center;">
+        <h3 style="margin:0">Ciudad 8×8 — Simulador UI</h3>
+        <div class="legend">
+          <div class="item"><span class="dot" style="background:var(--accent)"></span> Restaurante</div>
+          <div class="item"><span class="dot" style="background:var(--house)"></span> Casa</div>
+          <div class="item"><span class="dot" style="background:var(--driver)"></span> Motorista</div>
+        </div>
+      </div>
+      <div class="controls">
+        <select id="commMode">
+          <option value="mock">Mock (local)</option>
+          <option value="webserial">WebSerial (USB)</option>
+          <option value="websocket">WebSocket</option>
+        </select>
+        <button class="btn" id="connectBtn">Connect</button>
+        <button class="btn ghost" id="pauseBtn">Pausar</button>
+        <button class="btn" id="stressBtn">Stress (30 pedidos)</button>
+      </div>
+    </div>
+
+    <div class="grid-container">
+      <canvas id="gridCanvas" width="720" height="720"></canvas>
+    </div>
+    <div style="margin-top:8px; display:flex; justify-content:space-between; align-items:center;">
+      <div class="small">Coordenadas: Av (1..8) = x+1, Calle (1..8) = y+1</div>
+      <div class="small">Conexión WebSerial: 115200bps • JSON por líneas (\n)</div>
+    </div>
+  </div>
+
+  <div class="side">
+    <div class="panel-section">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <strong>Crear pedido manual</strong>
+        <div style="font-size:12px;color:var(--muted)">Clic en la celda destino</div>
+      </div>
+      <div style="margin-top:8px;">
+        <div id="createInfo" class="small">Haga clic en la cuadricula para crear pedido.</div>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <select id="selectRest"></select>
+          <button class="btn" id="btnCreateManual">Crear</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <strong>Controles</strong>
+      <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+        <label style="margin:0; width:110px;">Algoritmo cocina</label>
+        <select id="kitchenAlgo" style="flex:1;">
+          <option>FCFS</option>
+          <option selected>SJF</option>
+          <option>PRIO</option>
+        </select>
+      </div>
+      <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+        <label style="margin:0; width:110px;">Velocidad</label>
+        <select id="simSpeed" style="flex:1;">
+          <option value="1">1×</option>
+          <option value="2">2×</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <strong>Pedidos</strong>
+      <div style="display:flex; gap:8px; margin:6px 0;">
+        <select id="filterState"><option value="all">Todos</option><option value="CREATED">CREADO</option><option value="PREPARING">PREPARANDO</option><option value="READY">LISTO</option><option value="SEARCHING_DRIVER">BUSCANDO</option><option value="EN_REPARTO">EN_REPARTO</option><option value="DELIVERED">ENTREGADO</option></select>
+        <input id="searchOrder" placeholder="Buscar id..." />
+      </div>
+      <div style="max-height:140px; overflow:auto;">
+        <table id="ordersTable">
+          <thead><tr><th>id</th><th>estado</th><th>tPrep</th><th>asignadoA</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <strong>Motoristas</strong>
+      <div style="max-height:120px; overflow:auto;">
+        <table id="driversTable">
+          <thead><tr><th>id</th><th>carga</th><th>destino</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <strong>Restaurantes</strong>
+      <div style="max-height:120px; overflow:auto;">
+        <table id="restsTable">
+          <thead><tr><th>id</th><th>pos</th><th>cola</th><th>algo</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <strong>Historial</strong>
+      <div class="history-list" id="history"></div>
+      <div style="margin-top:8px; display:flex; gap:8px;">
+        <button class="btn ghost" id="clearHistory">Limpiar</button>
+        <button class="btn" id="downloadTraces">Exportar trazas</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Modal Crear Pedido -->
+<div class="modal" id="modalCreate">
+  <div class="card">
+    <h4 style="margin:0 0 8px 0;">Crear pedido manual</h4>
+    <div id="modalCoords" class="small"></div>
+    <label>Seleccionar restaurante</label>
+    <select id="modalSelectRest"></select>
+    <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px;">
+      <button class="btn ghost" id="modalCancel">Cancelar</button>
+      <button class="btn" id="modalConfirm">Crear</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
