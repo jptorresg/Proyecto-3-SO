@@ -1,4 +1,3 @@
-
 /*
   FRONTEND PRINCIPAL (HTML + JS)
   - Preparado para recibir JSON por WebSerial (115200) o WebSocket.
@@ -10,6 +9,10 @@
 /* ---------- Estado local ---------- */
 const state = {
   grid: {rows:8, cols:8},
+  // mapCells: 2D array rows x cols with values:
+  // 0 = libre, 1 = obstáculo, 2 = destino (si quieres marcar destinos especiales)
+  mapCells: [],
+
   restaurants: [], // {id, pos:{av,ca}, algo, queue}
   houses: [],      // {id, pos:{av,ca}}
   drivers: [],     // {id, pos:{av,ca}, load:[], target:{av,ca}, eta_s}
@@ -32,9 +35,34 @@ let simSpeed = 1;
 
 function resizeCanvas(){
   // si quisieras adaptativo, recalcular cellW/cellH
+  cellW = canvas.width / cols;
+  cellH = canvas.height / rows;
 }
+resizeCanvas();
+
 function drawGrid(){
   ctx.clearRect(0,0,W,H);
+  // background
+  ctx.fillStyle = '#fafafa';
+  ctx.fillRect(0,0,W,H);
+
+  // draw obstacles/background cells
+  for(let r=0;r<rows;r++){
+    for(let c=0;c<cols;c++){
+      const x = c*cellW, y = r*cellH;
+      const val = (state.mapCells && state.mapCells[r] && state.mapCells[r][c]) ? state.mapCells[r][c] : 0;
+      if(val === 1){
+        // obstacle cell
+        ctx.fillStyle = 'rgba(0,0,0,0.12)';
+        ctx.fillRect(x, y, cellW, cellH);
+      } else if(val === 2){
+        // special destination style (if used)
+        ctx.fillStyle = 'rgba(47,168,79,0.12)';
+        ctx.fillRect(x, y, cellW, cellH);
+      }
+    }
+  }
+
   ctx.strokeStyle = '#d5dbe0';
   for(let i=0;i<=cols;i++){
     const x = i*cellW;
@@ -52,6 +80,16 @@ function drawGrid(){
       const x = c*cellW, y=r*cellH;
       ctx.fillText(`Av${c+1}-C${r+1}`, x+6, y+16);
     }
+  }
+
+  // highlight selected cell
+  if(selectedCell){
+    const px = (selectedCell.av -1)*cellW;
+    const py = (selectedCell.ca -1)*cellH;
+    ctx.strokeStyle = '#ff5c00';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(px+1,py+1,cellW-2,cellH-2);
+    ctx.lineWidth = 1;
   }
 }
 
@@ -130,6 +168,7 @@ function drawDriver(d){
       if(i===0) ctx.moveTo(cx,cy); else ctx.lineTo(cx,cy);
     }
     ctx.stroke();
+    ctx.lineWidth = 1;
   }
 }
 
@@ -179,6 +218,18 @@ canvas.addEventListener('click', (ev)=>{
   openCreateModal(selectedCell);
 });
 
+// Right-click (contextmenu) toggle obstacle on cell (no modal)
+canvas.addEventListener('contextmenu', (ev)=>{
+  ev.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const x = ev.clientX - rect.left;
+  const y = ev.clientY - rect.top;
+  const av = Math.floor(x/cellW)+1;
+  const ca = Math.floor(y/cellH)+1;
+  toggleObstacleAtCell(av, ca);
+  return false;
+});
+
 document.getElementById('modalCancel').onclick = ()=> closeModal();
 document.getElementById('modalConfirm').onclick = ()=> {
   const rest = document.getElementById('modalSelectRest').value;
@@ -203,6 +254,14 @@ document.getElementById('stressBtn').onclick = ()=> {
   else if(comm.portWriter) comm.sendCommand({type:'cmd', cmd:'STRESS', n:30});
 };
 
+/* New: optional send map button (if exists in HTML) */
+const sendMapBtn = document.getElementById('sendMapBtn');
+if(sendMapBtn){
+  sendMapBtn.onclick = ()=> {
+    sendMapToBoard();
+  };
+}
+
 /* ---------- Modal helpers ---------- */
 function openCreateModal(coords) {
   document.getElementById('modalCoords').textContent = `Destino: Av${coords.av} - C${coords.ca}`;
@@ -217,6 +276,7 @@ function closeModal() {
 /* ---------- Populate selects based on state ---------- */
 function populateRests() {
   const sel = document.getElementById('selectRest');
+  if(!sel) return;
   sel.innerHTML = '';
   state.restaurants.forEach(r => {
     const opt = document.createElement('option');
@@ -228,6 +288,7 @@ function populateRests() {
 
 function populateModalRests() {
   const sel = document.getElementById('modalSelectRest');
+  if(!sel) return;
   sel.innerHTML = '';
   state.restaurants.forEach(r => {
     const opt = document.createElement('option');
@@ -263,66 +324,72 @@ function createOrderManual(coords, restId) {
 function refreshTables() {
   // orders table
   const tbody = document.querySelector('#ordersTable tbody');
-  tbody.innerHTML = '';
-  const filter = document.getElementById('filterState').value;
-  const q = document.getElementById('searchOrder').value.trim();
+  if(tbody){
+    tbody.innerHTML = '';
+    const filter = document.getElementById('filterState').value;
+    const q = document.getElementById('searchOrder').value.trim();
 
-  for (const o of state.orders) {
-    if (filter !== 'all' && o.state !== filter) continue;
-    if (q && !String(o.id).includes(q)) continue;
+    for (const o of state.orders) {
+      if (filter !== 'all' && o.state !== filter) continue;
+      if (q && !String(o.id).includes(q)) continue;
 
-    const tr = document.createElement('tr');
+      const tr = document.createElement('tr');
 
-    const tdId = document.createElement('td');
-    tdId.textContent = o.id;
-    tr.appendChild(tdId);
+      const tdId = document.createElement('td');
+      tdId.textContent = o.id;
+      tr.appendChild(tdId);
 
-    const tdState = document.createElement('td');
-    const span = document.createElement('span');
-    span.className = 'status-badge ' + statusClass(o.state);
-    span.textContent = o.state;
-    tdState.appendChild(span);
-    tr.appendChild(tdState);
+      const tdState = document.createElement('td');
+      const span = document.createElement('span');
+      span.className = 'status-badge ' + statusClass(o.state);
+      span.textContent = o.state;
+      tdState.appendChild(span);
+      tr.appendChild(tdState);
 
-    const tdPrep = document.createElement('td');
-    tdPrep.textContent = o.t_prep_s ? `${o.t_prep_s}s` : '-';
-    tr.appendChild(tdPrep);
+      const tdPrep = document.createElement('td');
+      tdPrep.textContent = o.t_prep_s ? `${o.t_prep_s}s` : '-';
+      tr.appendChild(tdPrep);
 
-    const tdDriver = document.createElement('td');
-    tdDriver.textContent = o.assignedTo || '-';
-    tr.appendChild(tdDriver);
+      const tdDriver = document.createElement('td');
+      tdDriver.textContent = o.assignedTo || '-';
+      tr.appendChild(tdDriver);
 
-    tbody.appendChild(tr);
+      tbody.appendChild(tr);
+    }
   }
 
   // drivers
   const tbodyD = document.querySelector('#driversTable tbody');
-  tbodyD.innerHTML = '';
-  for (const d of state.drivers) {
-    const tr = document.createElement('tr');
+  if(tbodyD){
+    tbodyD.innerHTML = '';
+    for (const d of state.drivers) {
+      const tr = document.createElement('tr');
 
-    const td1 = document.createElement('td');
-    td1.textContent = d.id;
-    tr.appendChild(td1);
+      const td1 = document.createElement('td');
+      td1.textContent = d.id;
+      tr.appendChild(td1);
 
-    const td2 = document.createElement('td');
-    td2.textContent = (d.load && d.load.length) ? d.load.length : 0;
-    tr.appendChild(td2);
+      const td2 = document.createElement('td');
+      td2.textContent = (d.load && d.load.length) ? d.load.length : 0;
+      tr.appendChild(td2);
 
-    const td3 = document.createElement('td');
-    td3.textContent = d.target ? `Av${d.target.av}, C${d.target.ca}` : '-';
-    tr.appendChild(td3);
+      const td3 = document.createElement('td');
+      td3.textContent = d.target ? `Av${d.target.av}, C${d.target.ca}` : '-';
+      tr.appendChild(td3);
 
-    tbodyD.appendChild(tr);
+      tbodyD.appendChild(tr);
+    }
   }
 
   // restaurants
   const tbodyR = document.querySelector('#restsTable tbody');
-  tbodyR.innerHTML = '';
-  for (const r of state.restaurants) {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${r.id}</td><td>Av${r.pos.av}, C${r.pos.ca}</td><td>${r.queue ?? 0}</td><td>${r.algo ?? 'SJF'}</td>`;
-    tbodyR.appendChild(tr);
+  if(tbodyR){
+    tbodyR.innerHTML = '';
+    for (const r of state.restaurants) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${r.id}</td><td>Av${r.pos.av}, C${r.pos.ca}</td><td>${r.queue ?? 0}</td><td>${r.algo ?? 'SJF'}</td>`;
+      tbodyR.appendChild(tr);
+    }
   }
 }
 
@@ -347,6 +414,7 @@ function addHistory(msg) {
 
 function renderHistory() {
   const el = document.getElementById('history');
+  if(!el) return;
   el.innerHTML = '';
   for (const h of state.history) {
     const div = document.createElement('div');
@@ -358,7 +426,7 @@ function renderHistory() {
 
 
 /* ---------- Export traces ---------- */
-document.getElementById('downloadTraces').onclick = ()=>{
+document.getElementById('downloadTraces').onclick = ()=> {
   const data = JSON.stringify(state.traces || [], null, 2);
   const blob = new Blob([data], {type:'application/json'});
   const url = URL.createObjectURL(blob);
@@ -398,11 +466,18 @@ const comm = {
       this.portReader = port.readable.getReader();
       this.portWriter = port.writable.getWriter();
       addHistory('Puerto serial abierto');
+
+      // Enviar mapa actual al conectar (opcional)
+      // Dejamos un pequeño timeout para que la placa esté lista
+      setTimeout(()=> {
+        sendMapToBoard();
+      }, 250);
+
       // read loop incremental
       this.readSerialLoop();
     } catch(err){
       console.error('Error abrir serial', err);
-      addHistory('Error abrir serial: ' + err.message);
+      addHistory('Error abrir serial: ' + (err.message || err));
     }
   },
 
@@ -417,7 +492,7 @@ const comm = {
           const text = new TextDecoder().decode(value);
           this.buffer += text;
           let idx;
-          while((idx = this.buffer.indexOf('\\n')) >= 0){
+          while((idx = this.buffer.indexOf('\n')) >= 0){
             const line = this.buffer.slice(0, idx).trim();
             this.buffer = this.buffer.slice(idx+1);
             if(line.length === 0) continue;
@@ -435,7 +510,7 @@ const comm = {
       }
     } catch(e){
       console.error('readSerialLoop err', e);
-      addHistory('readSerialLoop err: ' + e.message);
+      addHistory('readSerialLoop err: ' + (e.message || e));
     } finally {
       if(this.portReader){ try{ this.portReader.releaseLock(); }catch(e){} }
     }
@@ -443,7 +518,7 @@ const comm = {
 
   async sendCommand(obj){
     // obj -> stringify + '\n' and send via writer or websocket or handle mock
-    const txt = JSON.stringify(obj) + '\\n';
+    const txt = JSON.stringify(obj) + '\n';
     if(this.mode === 'webserial' && this.portWriter){
       try {
         await this.portWriter.write(new TextEncoder().encode(txt));
@@ -513,20 +588,18 @@ function handleIncomingJson(obj){
   if(!obj || !obj.type) return;
   if(obj.type === 'state'){
     // complete snapshot: replace local state
-    // Update local state in a safe way, keeping traces/history as needed
-    // IMPORTANT: This is the point where JSON received from the placa (via WebSerial or WebSocket)
-    // is parsed and applied. The expected structure is the "state" contract provided in las instrucciones.
     applyStateSnapshot(obj);
     addHistory('Snapshot recibido t=' + (obj.t || 0));
   } else if(obj.type === 'event'){
     // push event
     addHistory('EVENT: ' + obj.ev + (obj.order ? ' order ' + obj.order : ''));
-    // optionally update orders/drivers locally
     applyEvent(obj);
   } else if(obj.type === 'history'){
     // chunk of history items
     for(const it of obj.items || []){ state.history.unshift(it); }
     renderHistory();
+  } else if(obj.type === 'ack' && obj.cmd === 'SET_MAP'){
+    addHistory('Placa ACK map recibido');
   } else if(obj.type === 'event' && obj.ev === 'BUTTON_PRESSED'){
     showCatEmoji();
     addHistory('Botón placa presionado -> gato!');
@@ -540,6 +613,13 @@ function handleIncomingJson(obj){
 function applyStateSnapshot(s){
   // validate minimal fields
   state.grid = s.grid || state.grid;
+  // if placa envía mapa lo integramos
+  if(s.map && Array.isArray(s.map)){
+    // s.map expected as array of arrays rows x cols
+    state.mapCells = s.map.map(row => row.slice());
+  } else {
+    state.mapCells = state.mapCells || state.mapCellsInit || createEmptyMapArray();
+  }
   state.restaurants = s.restaurants || state.restaurants;
   state.houses = s.houses || state.houses;
   state.drivers = s.drivers || state.drivers;
@@ -549,6 +629,54 @@ function applyStateSnapshot(s){
   if(s.metrics && s.metrics.last_event) addHistory('metric event: ' + s.metrics.last_event);
 }
 
+/* ---------- Map helpers ---------- */
+function createEmptyMapArray(){
+  const arr = [];
+  for(let r=0;r<rows;r++){
+    arr[r] = [];
+    for(let c=0;c<cols;c++) arr[r][c] = 0;
+  }
+  return arr;
+}
+
+function initMapArrayIfNeeded(){
+  if(!state.mapCells || !Array.isArray(state.mapCells) || state.mapCells.length !== rows){
+    state.mapCells = createEmptyMapArray();
+  }
+}
+
+function mapToArrayObject(){
+  // returns compact map structure (rows x cols numbers)
+  initMapArrayIfNeeded();
+  return state.mapCells.map(row => row.slice());
+}
+
+function toggleObstacleAtCell(av, ca){
+  // av: 1..cols, ca:1..rows
+  initMapArrayIfNeeded();
+  const r = ca - 1;
+  const c = av - 1;
+  state.mapCells[r][c] = state.mapCells[r][c] === 1 ? 0 : 1;
+  addHistory(`Map toggle Av${av}-C${ca} => ${state.mapCells[r][c] === 1 ? 'OBST' : 'FREE'}`);
+  refreshUI();
+}
+
+/* ---------- Send map to STM32 ---------- */
+function sendMapToBoard(){
+  // format: { type: 'cmd', cmd: 'SET_MAP', map: [[...],[...],...] }
+  const payload = {
+    type: 'cmd',
+    cmd: 'SET_MAP',
+    map: mapToArrayObject()
+  };
+  comm.sendCommand(payload);
+  // trace
+  state.traces = state.traces || [];
+  state.traces.push({ ts: Date.now(), action: 'SEND_MAP', map: payload.map });
+  addHistory('Mapa enviado al board (SET_MAP)');
+}
+
+/* ---------- Show cat emoji ---------- */
 function showCatEmoji(){
   const el = document.createElement('div');
   el.style.position = 'fixed';
@@ -582,6 +710,8 @@ function applyEvent(e) {
     // push to traces
     state.traces = state.traces || [];
     state.traces.push({ ts: Date.now(), action: 'DELIVERED', order: e.order, latency_s: e.latency_s });
+  } else if (e.ev === 'MAP_ACCEPTED'){
+    addHistory('Placa informa: MAP_ACCEPTED');
   }
 }
 
@@ -617,6 +747,13 @@ function createDefaultMap() {
     { id: 'M3', pos: { av: 4, ca: 3 }, load: [], target: null, eta_s: 0 }
   ];
   state.orders = [];
+  // initialize mapCells (random some obstacles for visual)
+  state.mapCells = createEmptyMapArray();
+  // put some random obstacles near edges
+  for(let i=0;i<8;i++){
+    if(Math.random() < 0.15) state.mapCells[Math.floor(Math.random()*8)][Math.floor(Math.random()*8)] = 1;
+  }
+  state.mapCellsInit = state.mapCells.map(r => r.slice());
 }
 
 function mockGenerateSnapshot() {
@@ -670,11 +807,12 @@ function mockGenerateSnapshot() {
     }
   }
 
-  // assemble snapshot like placa
+  // assemble snapshot like placa; include map for debugging
   const snap = {
     type: 'state',
     t: Date.now(),
     grid: { rows: 8, cols: 8 },
+    map: mapToArrayObject(),
     restaurants: state.restaurants,
     houses: state.houses,
     drivers: state.drivers,
@@ -682,7 +820,7 @@ function mockGenerateSnapshot() {
     metrics: {
       avg_wait_s: 0,
       avg_delivery_s: 0,
-      kitchen_algo: document.getElementById('kitchenAlgo').value,
+      kitchen_algo: document.getElementById('kitchenAlgo') ? document.getElementById('kitchenAlgo').value : 'SJF',
       driver_policy: 'RR+nearest'
     }
   };
@@ -709,6 +847,12 @@ function mockHandleIncomingCommand(cmd) {
     addHistory(`Mock: ${cmd.cmd}`);
   } else if (cmd.type === 'cmd' && cmd.cmd === 'SET_KITCHEN_ALGO') {
     addHistory(`Mock set kitchen algo: ${cmd.algo}`);
+  } else if (cmd.type === 'cmd' && cmd.cmd === 'SET_MAP') {
+    // accept map and optionally modify internal map
+    if(Array.isArray(cmd.map)){
+      state.mapCells = cmd.map.map(row => row.slice());
+      addHistory('Mock: mapa SET_MAP recibido y aplicado');
+    }
   } else {
     addHistory(`Mock received cmd: ${JSON.stringify(cmd)}`);
   }
@@ -738,13 +882,18 @@ function init(){
   refreshTables();
   renderLoop();
   // wire some UI events
-  document.getElementById('kitchenAlgo').onchange = (e)=> {
+  const kitchen = document.getElementById('kitchenAlgo');
+  if(kitchen) kitchen.onchange = (e)=> {
     comm.sendCommand({type:'cmd', cmd:'SET_KITCHEN_ALGO', algo: e.target.value});
   };
-  document.getElementById('simSpeed').onchange = (e)=> { simSpeed = Number(e.target.value); addHistory('Velocidad set to ' + simSpeed + 'x'); };
-  document.getElementById('clearHistory').onclick = ()=> { state.history = []; renderHistory(); };
-  document.getElementById('filterState').onchange = refreshTables;
-  document.getElementById('searchOrder').oninput = refreshTables;
+  const sim = document.getElementById('simSpeed');
+  if(sim) sim.onchange = (e)=> { simSpeed = Number(e.target.value); addHistory('Velocidad set to ' + simSpeed + 'x'); };
+  const clear = document.getElementById('clearHistory');
+  if(clear) clear.onclick = ()=> { state.history = []; renderHistory(); };
+  const filter = document.getElementById('filterState');
+  if(filter) filter.onchange = refreshTables;
+  const search = document.getElementById('searchOrder');
+  if(search) search.oninput = refreshTables;
 }
 init();
 
@@ -755,22 +904,31 @@ window.onload = () => {
 
 // --- Inicialización del mapa ---
 window.addEventListener("DOMContentLoaded", () => {
-  // Datos de prueba (mock)
-  state.restaurants = [
-    { id: "R1", pos: { av: 2, ca: 3 } },
-    { id: "R2", pos: { av: 6, ca: 5 } }
-  ];
+  // Datos de prueba (mock) - mantenemos pero ya createDefaultMap() también los genera
+  if(state.restaurants.length === 0){
+    state.restaurants = [
+      { id: "R1", pos: { av: 2, ca: 3 } },
+      { id: "R2", pos: { av: 6, ca: 5 } }
+    ];
+  }
 
-  state.houses = [
-    { id: "H1", pos: { av: 1, ca: 7 } },
-    { id: "H2", pos: { av: 8, ca: 2 } },
-    { id: "H3", pos: { av: 4, ca: 4 } }
-  ];
+  if(state.houses.length === 0){
+    state.houses = [
+      { id: "H1", pos: { av: 1, ca: 7 } },
+      { id: "H2", pos: { av: 8, ca: 2 } },
+      { id: "H3", pos: { av: 4, ca: 4 } }
+    ];
+  }
 
-  state.drivers = [
-    { id: "D1", pos: { av: 3, ca: 8 }, load: [], target: null, eta_s: 0 },
-    { id: "D2", pos: { av: 7, ca: 1 }, load: [], target: null, eta_s: 0 }
-  ];
+  if(state.drivers.length === 0){
+    state.drivers = [
+      { id: "D1", pos: { av: 3, ca: 8 }, load: [], target: null, eta_s: 0 },
+      { id: "D2", pos: { av: 7, ca: 1 }, load: [], target: null, eta_s: 0 }
+    ];
+  }
+
+  // ensure map initialised
+  initMapArrayIfNeeded();
 
   drawGrid();
   drawMarkers();
@@ -778,9 +936,9 @@ window.addEventListener("DOMContentLoaded", () => {
 });
 
 /* ---------- Important: where JSON is read from placa ----------
-   - If using WebSerial: readSerialLoop() reads raw bytes -> accumulates into this.buffer -> when it finds a newline '\\n' it slices a line and JSON.parse(line)
+   - If using WebSerial: readSerialLoop() reads raw bytes -> accumulates into this.buffer -> when it finds a newline '\n' it slices a line and JSON.parse(line)
      Then handleIncomingJson(obj) is called.
    - If using WebSocket: onmessage -> JSON.parse(ev.data) -> handleIncomingJson(obj)
    - The central handler is handleIncomingJson(obj) which expects the "state" contract explained en las instrucciones.
-   - Make sure the STM32 envíe cada JSON completo terminado con '\\n' y que no incluya caracteres extra que rompan el parseo.
+   - Make sure the STM32 envíe cada JSON completo terminado con '\n' y que no incluya caracteres extra que rompan el parseo.
 */
